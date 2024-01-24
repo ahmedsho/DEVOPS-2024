@@ -25,4 +25,7 @@ git ls-files --> SA/LR
 git status --> To confirm SA or LR
 
 SA (Staging Area) is a temporary Location
+git log (shows all the commits)
+git log --oneline (same as "got log" but shows only one line)
+git show <commit ID> (To show the content of the commit change)
 
