@@ -28,4 +28,7 @@ SA (Staging Area) is a temporary Location
 git log (shows all the commits)
 git log --oneline (same as "got log" but shows only one line)
 git show <commit ID> (To show the content of the commit change)
-
+git remote -v (To show what is configured as a remote repo)
+git remote add origin https://github.com/ahmedsho/DEVOPS-2024.git (To add a remote repo)
+git push origin master (To push commit to origin in Github)
+Under profile => Settings => Developer Settings => Personal Access Token => Generate new token
