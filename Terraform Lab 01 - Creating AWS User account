@@ -1,0 +1,21 @@
+# Adding AWS Credentials to VSCode Terminal.
+-Login to the AWS console 
+-Create a user account with CLI access
+-After the user account is created, generate an Access Key for it & copy it.
+-From the VSCode Terminal, run the command: aws configure
+
+~You'll be prompted for:
+
+    AWS Access Key ID
+
+    AWS Secret Access Key
+
+    Default region (e.g., us-east-1)
+
+    Output format (e.g., json)
+
+~This will save your credentials to:
+
+    ~/.aws/credentials
+
+    ~/.aws/config
