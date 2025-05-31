@@ -1,0 +1,501 @@
+ === main.tf Code ===
+
+# Configure the AWS Provider
+provider "aws" {
+  region = "us-east-1"
+}
+
+#Retrieve the list of AZs in the current AWS region
+data "aws_availability_zones" "available" {}
+data "aws_region" "current" {}
+
+#Define the VPC
+resource "aws_vpc" "vpc" {
+  cidr_block = var.vpc_cidr
+
+  tags = {
+    Name        = var.vpc_name
+    Environment = "demo_environment"
+    Terraform   = "true"
+  }
+}
+
+#Deploy the private subnets
+resource "aws_subnet" "private_subnets" {
+  for_each          = var.private_subnets
+  vpc_id            = aws_vpc.vpc.id
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, each.value)
+  availability_zone = tolist(data.aws_availability_zones.available.names)[each.value]
+
+  tags = {
+    Name      = each.key
+    Terraform = "true"
+  }
+}
+
+#Deploy the public subnets
+resource "aws_subnet" "public_subnets" {
+  for_each                = var.public_subnets
+  vpc_id                  = aws_vpc.vpc.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, each.value + 100)
+  availability_zone       = tolist(data.aws_availability_zones.available.names)[each.value]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name      = each.key
+    Terraform = "true"
+  }
+}
+
+#Create route tables for public and private subnets
+resource "aws_route_table" "public_route_table" {
+  vpc_id = aws_vpc.vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    gateway_id     = aws_internet_gateway.internet_gateway.id
+    #nat_gateway_id = aws_nat_gateway.nat_gateway.id
+  }
+  tags = {
+    Name      = "demo_public_rtb"
+    Terraform = "true"
+  }
+}
+
+resource "aws_route_table" "private_route_table" {
+  vpc_id = aws_vpc.vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    # gateway_id     = aws_internet_gateway.internet_gateway.id
+    nat_gateway_id = aws_nat_gateway.nat_gateway.id
+  }
+  tags = {
+    Name      = "demo_private_rtb"
+    Terraform = "true"
+  }
+}
+
+#Create route table associations
+resource "aws_route_table_association" "public" {
+  depends_on     = [aws_subnet.public_subnets]
+  route_table_id = aws_route_table.public_route_table.id
+  for_each       = aws_subnet.public_subnets
+  subnet_id      = each.value.id
+}
+
+resource "aws_route_table_association" "private" {
+  depends_on     = [aws_subnet.private_subnets]
+  route_table_id = aws_route_table.private_route_table.id
+  for_each       = aws_subnet.private_subnets
+  subnet_id      = each.value.id
+}
+
+#Create Internet Gateway
+resource "aws_internet_gateway" "internet_gateway" {
+  vpc_id = aws_vpc.vpc.id
+  tags = {
+    Name = "demo_igw"
+  }
+}
+
+#Create EIP for NAT Gateway
+resource "aws_eip" "nat_gateway_eip" {
+  domain     = "vpc"
+  depends_on = [aws_internet_gateway.internet_gateway]
+  tags = {
+    Name = "demo_igw_eip"
+  }
+}
+
+#Create NAT Gateway
+resource "aws_nat_gateway" "nat_gateway" {
+  depends_on    = [aws_subnet.public_subnets]
+  allocation_id = aws_eip.nat_gateway_eip.id
+  subnet_id     = aws_subnet.public_subnets["public_subnet_1"].id
+  tags = {
+    Name = "demo_nat_gateway"
+  }
+}
+
+
+=== Variable.tf Code ===
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "vpc_name" {
+  type    = string
+  default = "demo_vpc"
+}
+
+variable "vpc_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}
+
+variable "private_subnets" {
+  default = {
+    "private_subnet_1" = 1
+    "private_subnet_2" = 2
+    "private_subnet_3" = 3
+  }
+}
+
+variable "public_subnets" {
+  default = {
+    "public_subnet_1" = 1
+    "public_subnet_2" = 2
+    "public_subnet_3" = 3
+  }
+}
+
+
+=== Commands ===
+terraform init                     # To initialize Terraform
+terraform validate                 # To validate the resources to be provisioned
+terraform plan                     # To dry-run the resources to be provisioned
+terraform apply                    # To provision the resources
+terraform destroy -auto-approve    # To de-provision the AWS resources
+
+# The Output of the VSCode terminal is shown below:
+
+PS C:\Terraform> terraform destroy -auto-approve
+data.aws_availability_zones.available: Reading...
+data.aws_region.current: Reading...
+aws_vpc.vpc: Refreshing state... [id=vpc-030551fc2163a66bb]   
+data.aws_region.current: Read complete after 0s [id=us-east-1]
+data.aws_availability_zones.available: Read complete after 0s [id=us-east-1]
+aws_internet_gateway.internet_gateway: Refreshing state... [id=igw-0bc257e3b093c8d61]
+aws_route_table.private_route_table: Refreshing state... [id=rtb-04a525c5d1b91206c]
+aws_subnet.private_subnets["private_subnet_1"]: Refreshing state... [id=subnet-0830f582bfcde6279]
+aws_subnet.private_subnets["private_subnet_2"]: Refreshing state... [id=subnet-00bde66f39c312a28]
+aws_subnet.public_subnets["public_subnet_1"]: Refreshing state... [id=subnet-0a59c4c255ea7326b]  
+aws_subnet.public_subnets["public_subnet_2"]: Refreshing state... [id=subnet-0c4c2667b27dc7745]  
+aws_subnet.public_subnets["public_subnet_3"]: Refreshing state... [id=subnet-01cbb41807b815f12]  
+aws_subnet.private_subnets["private_subnet_3"]: Refreshing state... [id=subnet-0239d51e5b73e732d]
+aws_route_table.public_route_table: Refreshing state... [id=rtb-00af80c748f16ab62]
+aws_route_table_association.public["public_subnet_3"]: Refreshing state... [id=rtbassoc-01ae127da861635e3]
+aws_route_table_association.public["public_subnet_1"]: Refreshing state... [id=rtbassoc-00256574d0cb17fe0]
+aws_route_table_association.public["public_subnet_2"]: Refreshing state... [id=rtbassoc-004ab1d373e1d3ad7]
+
+Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # aws_internet_gateway.internet_gateway will be destroyed
+  - resource "aws_internet_gateway" "internet_gateway" {
+      - arn      = "arn:aws:ec2:us-east-1:728457114728:internet-gateway/igw-0bc257e3b093c8d61" -> null
+      - id       = "igw-0bc257e3b093c8d61" -> null
+      - owner_id = "728457114728" -> null
+      - tags     = {
+          - "Name" = "demo_igw"
+        } -> null
+      - tags_all = {
+          - "Name" = "demo_igw"
+        } -> null
+      - vpc_id   = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_route_table.private_route_table will be destroyed
+  - resource "aws_route_table" "private_route_table" {
+      - arn              = "arn:aws:ec2:us-east-1:728457114728:route-table/rtb-04a525c5d1b91206c" -> null
+      - id               = "rtb-04a525c5d1b91206c" -> null
+      - owner_id         = "728457114728" -> null
+      - propagating_vgws = [] -> null
+      - route            = [] -> null
+      - tags             = {
+          - "Name"      = "demo_private_rtb"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all         = {
+          - "Name"      = "demo_private_rtb"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id           = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_route_table.public_route_table will be destroyed
+  - resource "aws_route_table" "public_route_table" {
+      - arn              = "arn:aws:ec2:us-east-1:728457114728:route-table/rtb-00af80c748f16ab62" -> null
+      - id               = "rtb-00af80c748f16ab62" -> null
+      - owner_id         = "728457114728" -> null
+      - propagating_vgws = [] -> null
+      - route            = [
+          - {
+              - carrier_gateway_id         = ""
+              - cidr_block                 = "0.0.0.0/0"
+              - core_network_arn           = ""
+              - destination_prefix_list_id = ""
+              - egress_only_gateway_id     = ""
+              - gateway_id                 = "igw-0bc257e3b093c8d61"
+              - ipv6_cidr_block            = ""
+              - local_gateway_id           = ""
+              - nat_gateway_id             = ""
+              - network_interface_id       = ""
+              - transit_gateway_id         = ""
+              - vpc_endpoint_id            = ""
+              - vpc_peering_connection_id  = ""
+            },
+        ] -> null
+      - tags             = {
+          - "Name"      = "demo_public_rtb"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all         = {
+          - "Name"      = "demo_public_rtb"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id           = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_route_table_association.public["public_subnet_1"] will be destroyed
+  - resource "aws_route_table_association" "public" {
+      - id             = "rtbassoc-00256574d0cb17fe0" -> null
+      - route_table_id = "rtb-00af80c748f16ab62" -> null
+      - subnet_id      = "subnet-0a59c4c255ea7326b" -> null
+    }
+
+  # aws_route_table_association.public["public_subnet_2"] will be destroyed
+  - resource "aws_route_table_association" "public" {
+      - id             = "rtbassoc-004ab1d373e1d3ad7" -> null
+      - route_table_id = "rtb-00af80c748f16ab62" -> null
+      - subnet_id      = "subnet-0c4c2667b27dc7745" -> null
+    }
+
+  # aws_route_table_association.public["public_subnet_3"] will be destroyed
+  - resource "aws_route_table_association" "public" {
+      - id             = "rtbassoc-01ae127da861635e3" -> null
+      - route_table_id = "rtb-00af80c748f16ab62" -> null
+      - subnet_id      = "subnet-01cbb41807b815f12" -> null
+    }
+
+  # aws_subnet.private_subnets["private_subnet_1"] will be destroyed
+  - resource "aws_subnet" "private_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-0830f582bfcde6279" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1b" -> null
+      - availability_zone_id                           = "use1-az6" -> null
+      - cidr_block                                     = "10.0.1.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-0830f582bfcde6279" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "private_subnet_1"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "private_subnet_1"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_subnet.private_subnets["private_subnet_2"] will be destroyed
+  - resource "aws_subnet" "private_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-00bde66f39c312a28" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1c" -> null
+      - availability_zone_id                           = "use1-az1" -> null
+      - cidr_block                                     = "10.0.2.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-00bde66f39c312a28" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "private_subnet_2"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "private_subnet_2"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_subnet.private_subnets["private_subnet_3"] will be destroyed
+  - resource "aws_subnet" "private_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-0239d51e5b73e732d" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1d" -> null
+      - availability_zone_id                           = "use1-az2" -> null
+      - cidr_block                                     = "10.0.3.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-0239d51e5b73e732d" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "private_subnet_3"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "private_subnet_3"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_subnet.public_subnets["public_subnet_1"] will be destroyed
+  - resource "aws_subnet" "public_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-0a59c4c255ea7326b" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1b" -> null
+      - availability_zone_id                           = "use1-az6" -> null
+      - cidr_block                                     = "10.0.101.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-0a59c4c255ea7326b" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = true -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "public_subnet_1"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "public_subnet_1"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_subnet.public_subnets["public_subnet_2"] will be destroyed
+  - resource "aws_subnet" "public_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-0c4c2667b27dc7745" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1c" -> null
+      - availability_zone_id                           = "use1-az1" -> null
+      - cidr_block                                     = "10.0.102.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-0c4c2667b27dc7745" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = true -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "public_subnet_2"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "public_subnet_2"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_subnet.public_subnets["public_subnet_3"] will be destroyed
+  - resource "aws_subnet" "public_subnets" {
+      - arn                                            = "arn:aws:ec2:us-east-1:728457114728:subnet/subnet-01cbb41807b815f12" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1d" -> null
+      - availability_zone_id                           = "use1-az2" -> null
+      - cidr_block                                     = "10.0.103.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-01cbb41807b815f12" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = true -> null
+      - owner_id                                       = "728457114728" -> null
+      - private_dns_hostname_type_on_launch            = "ip-name" -> null
+      - tags                                           = {
+          - "Name"      = "public_subnet_3"
+          - "Terraform" = "true"
+        } -> null
+      - tags_all                                       = {
+          - "Name"      = "public_subnet_3"
+          - "Terraform" = "true"
+        } -> null
+      - vpc_id                                         = "vpc-030551fc2163a66bb" -> null
+    }
+
+  # aws_vpc.vpc will be destroyed
+  - resource "aws_vpc" "vpc" {
+      - arn                                  = "arn:aws:ec2:us-east-1:728457114728:vpc/vpc-030551fc2163a66bb" -> null
+      - assign_generated_ipv6_cidr_block     = false -> null
+      - cidr_block                           = "10.0.0.0/16" -> null
+      - default_network_acl_id               = "acl-03806044b60840a38" -> null
+      - default_route_table_id               = "rtb-0b6fc6402a054ee0d" -> null
+      - default_security_group_id            = "sg-03674cdfdab96b08e" -> null
+      - dhcp_options_id                      = "dopt-022904a211d9b3e8f" -> null
+      - enable_dns_hostnames                 = false -> null
+      - enable_dns_support                   = true -> null
+      - enable_network_address_usage_metrics = false -> null
+      - id                                   = "vpc-030551fc2163a66bb" -> null
+      - instance_tenancy                     = "default" -> null
+      - ipv6_netmask_length                  = 0 -> null
+      - main_route_table_id                  = "rtb-0b6fc6402a054ee0d" -> null
+      - owner_id                             = "728457114728" -> null
+      - tags                                 = {
+          - "Environment" = "demo_environment"
+          - "Name"        = "demo_vpc"
+          - "Terraform"   = "true"
+        } -> null
+      - tags_all                             = {
+          - "Environment" = "demo_environment"
+          - "Name"        = "demo_vpc"
+          - "Terraform"   = "true"
+        } -> null
+    }
+
+Plan: 0 to add, 0 to change, 13 to destroy.
+aws_route_table_association.public["public_subnet_1"]: Destroying... [id=rtbassoc-00256574d0cb17fe0]
+aws_route_table_association.public["public_subnet_3"]: Destroying... [id=rtbassoc-01ae127da861635e3]
+aws_route_table_association.public["public_subnet_2"]: Destroying... [id=rtbassoc-004ab1d373e1d3ad7]
+aws_subnet.private_subnets["private_subnet_3"]: Destroying... [id=subnet-0239d51e5b73e732d]
+aws_route_table.private_route_table: Destroying... [id=rtb-04a525c5d1b91206c]
+aws_subnet.private_subnets["private_subnet_1"]: Destroying... [id=subnet-0830f582bfcde6279]
+aws_subnet.private_subnets["private_subnet_2"]: Destroying... [id=subnet-00bde66f39c312a28]
+aws_route_table_association.public["public_subnet_1"]: Destruction complete after 0s
+aws_route_table_association.public["public_subnet_2"]: Destruction complete after 0s
+aws_route_table_association.public["public_subnet_3"]: Destruction complete after 0s
+aws_subnet.public_subnets["public_subnet_3"]: Destroying... [id=subnet-01cbb41807b815f12]
+aws_subnet.public_subnets["public_subnet_1"]: Destroying... [id=subnet-0a59c4c255ea7326b]
+aws_route_table.public_route_table: Destroying... [id=rtb-00af80c748f16ab62]
+aws_subnet.public_subnets["public_subnet_2"]: Destroying... [id=subnet-0c4c2667b27dc7745]
+aws_subnet.private_subnets["private_subnet_1"]: Destruction complete after 0s
+aws_subnet.private_subnets["private_subnet_2"]: Destruction complete after 0s
+aws_subnet.private_subnets["private_subnet_3"]: Destruction complete after 0s
+aws_route_table.private_route_table: Destruction complete after 0s
+aws_subnet.public_subnets["public_subnet_3"]: Destruction complete after 0s
+aws_subnet.public_subnets["public_subnet_1"]: Destruction complete after 1s
+aws_route_table.public_route_table: Destruction complete after 1s
+aws_internet_gateway.internet_gateway: Destroying... [id=igw-0bc257e3b093c8d61]
+aws_subnet.public_subnets["public_subnet_2"]: Destruction complete after 1s
+aws_internet_gateway.internet_gateway: Destruction complete after 0s
+aws_vpc.vpc: Destroying... [id=vpc-030551fc2163a66bb]
+aws_vpc.vpc: Destruction complete after 1s
+
+Destroy complete! Resources: 13 destroyed.
+PS C:\Terraform> 
